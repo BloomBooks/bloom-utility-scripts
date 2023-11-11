@@ -1,3 +1,6 @@
+// This reads in a json of all unique custom sets of rules, drops the ones that don't need to be migrated,
+// and then outputs the results as json file. See README.md for use.
+
 import fs from "fs";
 
 interface Record {
@@ -5,7 +8,7 @@ interface Record {
   paths: string[];
 }
 
-const data = fs.readFileSync("have-custom.json", "utf8");
+const data = fs.readFileSync("./output/group-output.json", "utf8");
 const records: Record[] = JSON.parse(data);
 
 const count = records.reduce((acc, record) => acc + record.paths.length, 0);
@@ -24,9 +27,11 @@ const recordsWithUniqueifiedPaths = filteredRecords.map((record) => {
   const uniquePaths = uniqueFilenames.map((filename) => {
     return paths.find((path) => path.endsWith(filename));
   });
+  const instanceId = paths[0].split("/")[2];
   return {
     book_count: paths.length,
     unique_named_books: uniquePaths.length,
+    first_book: `https://bloomlibrary.org/:search:bookInstanceId%3A${instanceId}`,
     css: record.content,
     paths,
     uniqueified_paths: uniquePaths,
@@ -34,11 +39,25 @@ const recordsWithUniqueifiedPaths = filteredRecords.map((record) => {
 });
 
 const sortedRecords = recordsWithUniqueifiedPaths.sort((a, b) => {
-  return a.uniqueified_paths.length - b.uniqueified_paths.length;
+  return b.uniqueified_paths.length - a.uniqueified_paths.length;
+});
+
+// insert a metadata record into the first position
+(sortedRecords as any).unshift({
+  "total books with custom css rules": count,
+  "total books with problematic rules": filteredRecords.reduce(
+    (acc, record) => acc + record.paths.length,
+    0
+  ),
+  "total unique css files": records.length,
+  "unique CSS files with problematic rules": filteredRecords.length,
+  "counts of unique books for each unique css file": sortedRecords
+    .map((record) => record.uniqueified_paths.length)
+    .join(" "),
 });
 
 fs.writeFileSync(
-  "problematic-rules.json",
+  "./output/filter-output.json",
   JSON.stringify(sortedRecords, null, 2)
 );
 
@@ -52,9 +71,9 @@ console.write(
   )} books, `
 );
 
-console.write(
-  `${recordsWithUniqueifiedPaths.reduce(
-    (acc, record) => acc + record.uniqueified_paths.length,
-    0
-  )} of which have unique names (should remove most rebrands).\r\n`
-);
+// console.write(
+//   `${recordsWithUniqueifiedPaths.reduce(
+//     (acc, record) => acc + record.uniqueified_paths.length,
+//     0
+//   )} of which have unique names (should remove most rebrands).\r\n`
+// );

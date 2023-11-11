@@ -1,3 +1,7 @@
+// This looks at all the stylesheets, groups them into unique sets of rules,
+// and then outputs the results as json file. See README.md for use.
+// It takes a single optional argument, which is the number of books to process.
+
 import * as fs from "fs";
 import * as path from "path";
 
@@ -19,7 +23,7 @@ function readFilesRecursively(
   const files = fs.readdirSync(dir);
   for (const file of files) {
     const filePath = path.join(dir, file);
-    if (count > 100000) return;
+    if (Bun.argv.length > 2 && count >= Number.parseInt(Bun.argv[2])) return;
     if (fs.statSync(filePath).isDirectory()) {
       readFilesRecursively(filePath, fileMap);
     } else {
@@ -31,30 +35,25 @@ function readFilesRecursively(
       if (content === "") continue;
 
       const fileData: FileData = fileMap.get(content) || { content, paths: [] };
-      fileData.paths.push(
-        dir.replace("/mnt/c/dev/BloomBulkDownloader/sync", "")
-      );
+      fileData.paths.push(dir.replace("./output/downloads", ""));
       fileMap.set(content, fileData);
       console.log(++count + " " + dir);
     }
   }
 }
 
-function writeUniqueFiles(dir: string, fileMap: Map<string, FileData>): void {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir);
-  }
-  const indexFilePath = path.join(dir, "index.json");
-  const indexFileContent = JSON.stringify(
-    Array.from(fileMap.values()),
-    null,
-    2
-  );
-  fs.writeFileSync(indexFilePath, indexFileContent);
+const sourceDir = "./output/downloads";
+const fileMap = new Map<string, FileData>();
+
+if (!fs.existsSync("./output")) {
+  fs.mkdirSync("./output");
 }
 
-const sourceDir = "/mnt/c/dev/BloomBulkDownloader/sync";
-const targetDir = "/mnt/c/dev/BloomBulkDownloader/unique";
-const fileMap = new Map<string, FileData>();
+if (fs.existsSync("./output/group-output.json")) {
+  fs.rmSync("./output/group-output.json");
+}
 readFilesRecursively(sourceDir, fileMap);
-writeUniqueFiles(targetDir, fileMap);
+fs.writeFileSync(
+  "./output/group-output.json",
+  JSON.stringify(Array.from(fileMap.values()), null, 2)
+);

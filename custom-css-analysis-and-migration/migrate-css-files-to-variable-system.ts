@@ -1,3 +1,10 @@
+/**
+ *
+ * I'm not clear what state this is in, it was an experiment I was working on.
+ * It probably should become a function that is called by create-migrations.ts
+ *
+ * **/
+
 import fs from "fs";
 import { parse, stringify, Rule, Stylesheet, Declaration } from "css";
 
@@ -52,6 +59,21 @@ const sizes = [
   { name: ".Device16x9Landscape", height: 100, width: 177.77777778 },
   { name: ".PictureStoryLandscape", height: 100, width: 177.77777778 },
 ];
+interface PropertyConversions {
+  [key: string]: string;
+}
+const propertyConversions: PropertyConversions = {
+  left: "--page-margin-left",
+  top: "--page-margin-top",
+  height: "--page-margin-bottom",
+  width: "--page-margin-right",
+};
+const coverPropertyConversions: PropertyConversions = {
+  left: "--page-margin-left",
+  top: "--cover-margin-top",
+  height: "--cover-margin-bottom",
+  width: "--page-margin-right",
+};
 
 const cssFileContent: string = fs.readFileSync("./zebra.css", "utf8");
 const cssObject: Stylesheet = parse(cssFileContent);
@@ -94,9 +116,7 @@ if (cssObject.stylesheet && cssObject.stylesheet.rules) {
       rule.declarations?.forEach((declaration: Declaration) => {
         if (declaration.type === "declaration") {
           const key = (declaration as Declaration).property;
-          interface PropertyConversions {
-            [key: string]: string;
-          }
+
           if (size) {
             if (key === "width") {
               declaration.value =
@@ -113,22 +133,85 @@ if (cssObject.stylesheet && cssObject.stylesheet.rules) {
                 "mm";
             }
           }
-          const propertyConversions: PropertyConversions = {
-            left: "--page-margin-left",
-            top: "--page-margin-top",
-            height: "--page-margin-bottom",
-            width: "--page-margin-right",
-          };
 
-          if (declaration.property! in propertyConversions) {
-            declaration.property = propertyConversions[declaration.property!];
+          const isCover = rule.selectors!.some((sel) => sel.includes("Cover"));
+          const map = isCover ? coverPropertyConversions : propertyConversions;
+          if (declaration.property! in map) {
+            declaration.property = map[declaration.property!];
             declaration.value = declaration.value?.replace("!important", "");
           }
         }
       });
+
+      // danger, this would probably break if there is anything but classes in the selector
+      sortClassesInSelector(rule);
+
+      // TODO: this doesn't yet move top and bottom margins with .outsideFrontCover and .outsideBackCover to --cover-margin-top and --cover-margin-bottom
+
+      sortDeclarations(rule);
     }
   });
+
+  // danger, normally sorting rules is not a good idea!
+  cssObject.stylesheet.rules = sortRules(cssObject.stylesheet.rules);
 }
 
 const modifiedCss: string = stringify(cssObject);
 console.log(modifiedCss);
+
+function sortDeclarations(rule: Rule) {
+  // Define the type of propertyConversions
+  type PropertyConversions = {
+    [key: string]: number;
+  };
+
+  // Define the property conversions object
+  const orderedProperties: PropertyConversions = {
+    "--page-margin-top": 0,
+    "--page-margin-bottom": 1,
+    "--page-margin-left": 2,
+    "--page-margin-right": 3,
+  };
+
+  // sort the declarations according to the order in propertyConversions
+  rule.declarations?.sort((a: Declaration, b: Declaration) => {
+    const aProp = orderedProperties[a.property!];
+    const bProp = orderedProperties[b.property!];
+    if (aProp === undefined && bProp === undefined) {
+      return 0;
+    } else if (aProp === undefined) {
+      return 1;
+    } else if (bProp === undefined) {
+      return -1;
+    } else {
+      return aProp - bProp;
+    }
+  });
+}
+function sortClassesInSelector(rule: any): void {
+  // sort the classes in the first selector
+  const classes = rule.selectors[0].trim().split(".").filter(Boolean).sort();
+  const sortedSelector = "." + classes.join(".");
+  rule.selectors[0] = sortedSelector;
+}
+
+function sortRules(rules: Rule[]): Rule[] {
+  return rules.sort((a: Rule, b: Rule) => {
+    if (a.type !== "rule" || b.type !== "rule") return 0;
+
+    // sort rules by first selector
+    const aSelector = a.selectors ? a.selectors[0] : undefined;
+    const bSelector = b.selectors ? b.selectors[0] : undefined;
+    if (
+      aSelector === bSelector ||
+      aSelector === undefined ||
+      bSelector === undefined
+    ) {
+      return 0;
+    } else if (aSelector > bSelector) {
+      return 1;
+    } else {
+      return -1;
+    }
+  });
+}
