@@ -66,13 +66,12 @@ for (const record of records) {
   fs.writeFileSync(
     `${folder}/appearance.json`,
     `// Matches customBookStyles.css with checksum ${checksum}
-    // This was used by ${record.book_count} books (${record.unique_named_books} unique).` +
-      // todo: +`// Affected branding projects include "Mali-ACR-2020-Soninke".`
+// This was used by ${record.book_count} books (${record.unique_named_books} unique).` +
+      // enhance: +`// Affected branding projects include "Mali-ACR-2020-Soninke".`
       `// Uploaders included ${JSON.stringify(uniqueUploaders)}.
-    // Example Book: ${record.first_book}
-    // A replacement customBookStyles.css has been generated.
-    {
-    }
-    `
+// Example Book: ${record.first_book}
+// A replacement customBookStyles.css has been generated.
+{
+}`
   );
 }

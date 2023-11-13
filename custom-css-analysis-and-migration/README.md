@@ -18,16 +18,16 @@ When Bloom encounters a pre-5.7 book with a `customBookStyles.css` that would co
 
     `./some-path/BloomBulkDownloader.exe --include "*/*/custom*Styles.css" --syncfolder ./output/downloads --bucket production customBookStyles-files`
 
-1.  Process those, grouping them into bins of duplicate stylesheets
+Each of the following take an optional argument that will limit the number of records processed.
+
+5.  Process those, grouping them into bins of duplicate stylesheets
 
     `bun run group-stylesheets.ts 13`
 
-    Here the number is optional and it limits how many stylesheets will be processed.
-
 1.  Process those groups, discarding ones that don't need migration
 
-    `bun run filter-stylesheets.ts`
+    `bun run filter-stylesheets.ts 7`
 
 1.  Create draft migration files for each one
 
-    `bun run create-migrations.ts`
+    `bun run create-migrations.ts 3`
