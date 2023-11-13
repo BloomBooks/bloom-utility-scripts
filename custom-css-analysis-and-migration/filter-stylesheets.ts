@@ -15,8 +15,11 @@ const count = records.reduce((acc, record) => acc + record.paths.length, 0);
 console.write(`total books with custom css rules: ${count}\r\n`);
 console.write(`total unique css files: ${records.length}\r\n`);
 
+const kProbablyWillInterfere = `\\.marginBox\\s*\\{[^\\}]*?(?<![-\\w])(padding-|left:|top:|right:|bottom:|margin-|width:|height:)[^\\}]*\\}`;
+const kProbablyWillInterfereRegex = new RegExp(kProbablyWillInterfere, "gi");
+
 const filteredRecords = records.filter((record) => {
-  return record.content.includes("left") || record.content.includes("width");
+  return kProbablyWillInterfereRegex.test(record.content);
 });
 
 // in filteredRecords.paths, we want to remove any path that has the same filename as another path
