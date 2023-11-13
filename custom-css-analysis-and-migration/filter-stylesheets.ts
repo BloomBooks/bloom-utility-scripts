@@ -18,9 +18,13 @@ console.write(`total unique css files: ${records.length}\r\n`);
 const kProbablyWillInterfere = `\\.marginBox\\s*\\{[^\\}]*?(?<![-\\w])(padding-|left:|top:|right:|bottom:|margin-|width:|height:)[^\\}]*\\}`;
 const kProbablyWillInterfereRegex = new RegExp(kProbablyWillInterfere, "gi");
 
-const filteredRecords = records.filter((record) => {
-  return kProbablyWillInterfereRegex.test(record.content);
-});
+const max = Bun.argv.length > 2 ? Number.parseInt(Bun.argv[2]) : 10000000;
+
+const filteredRecords = records
+  .filter((record) => {
+    return kProbablyWillInterfereRegex.test(record.content);
+  })
+  .slice(0, max);
 
 // in filteredRecords.paths, we want to remove any path that has the same filename as another path
 const recordsWithUniqueifiedPaths = filteredRecords.map((record) => {

@@ -75,89 +75,102 @@ const coverPropertyConversions: PropertyConversions = {
   width: "--page-margin-right",
 };
 
-const cssFileContent: string = fs.readFileSync("./zebra.css", "utf8");
-const cssObject: Stylesheet = parse(cssFileContent);
+export function migrateCssToAppearance(cssFileContent: string): string {
+  var cssObject: Stylesheet;
+  try {
+    cssObject = parse(cssFileContent);
+  } catch (e) {
+    console.log("Error parsing css: " + e);
+    return cssFileContent;
+  }
 
-if (cssObject.stylesheet && cssObject.stylesheet.rules) {
-  cssObject.stylesheet.rules.forEach((rule: Rule) => {
-    if (
-      rule.type === "rule" &&
-      rule.selectors &&
-      rule.selectors.some((s: string) => s.includes(".marginBox"))
-    ) {
-      // remove the .marginBox class from the selectors
-      rule.selectors = rule.selectors.map((s: string) =>
-        s.replace(".marginBox", "")
-      );
+  if (cssObject.stylesheet && cssObject.stylesheet.rules) {
+    cssObject.stylesheet.rules.forEach((rule: Rule) => {
+      if (
+        rule.type === "rule" &&
+        rule.selectors &&
+        rule.selectors.some((s: string) => s.includes(".marginBox"))
+      ) {
+        // THE Following removal, LIKE A LOT OF THIS FILE, IS GARBAGE. A RULE LIKE
+        // .marginBox { background-color: red; } is just fine.
 
-      // find the sizes element that has the same name as one of the selectors
-      const size = sizes.find((sz) =>
-        rule.selectors!.some((sel) => sel.includes(sz.name))
-      );
+        // remove the .marginBox class from the selectors
+        rule.selectors = rule.selectors.map((s: string) =>
+          s.replace(".marginBox", "")
+        );
 
-      var x = rule.declarations?.find(
-        (d: Declaration) => d.property === "left"
-      ) as Declaration;
+        // find the sizes element that has the same name as one of the selectors
+        const size = sizes.find((sz) =>
+          rule.selectors!.some((sel) => sel.includes(sz.name))
+        );
 
-      var left = Number.parseFloat(
-        (
+        var x = rule.declarations?.find(
+          (d: Declaration) => d.property === "left"
+        ) as Declaration;
+
+        const l = (
           rule.declarations?.find(
             (d: Declaration) => d.property === "left"
           ) as Declaration
-        ).value!
-      );
-      var top = Number.parseFloat(
-        (
+        )?.value!;
+
+        const t = (
           rule.declarations?.find(
             (d: Declaration) => d.property === "top"
           ) as Declaration
-        ).value!
-      );
-      rule.declarations?.forEach((declaration: Declaration) => {
-        if (declaration.type === "declaration") {
-          const key = (declaration as Declaration).property;
+        )?.value!;
 
-          if (size) {
-            if (key === "width") {
-              declaration.value =
-                size.width -
-                Number.parseFloat(declaration.value!) -
-                left +
-                "mm";
+        if (!l || !t) return; // todo log it?
+
+        var left = parseFloatOrUndefined(l);
+        var top = parseFloatOrUndefined(t);
+        rule.declarations?.forEach((declaration: Declaration) => {
+          if (declaration.type === "declaration") {
+            const key = (declaration as Declaration).property;
+
+            if (size) {
+              const v = parseFloatOrUndefined(declaration.value!);
+              if (v === undefined || left === undefined || top === undefined)
+                declaration.value = ` ignore /* error: ${rule.declarations?.toString()} */`;
+              else {
+                if (key === "width") {
+                  declaration.value = size.width - v - left + "mm";
+                }
+                if (key === "height") {
+                  declaration.value = size.height - v - top + "mm";
+                }
+              }
             }
-            if (key === "height") {
-              declaration.value =
-                size.height -
-                Number.parseFloat(declaration.value!) -
-                top +
-                "mm";
+
+            const isCover = rule.selectors!.some((sel) =>
+              sel.includes("Cover")
+            );
+            const map = isCover
+              ? coverPropertyConversions
+              : propertyConversions;
+            if (declaration.property! in map) {
+              declaration.property = map[declaration.property!];
+              declaration.value = declaration.value?.replace("!important", "");
             }
           }
+        });
 
-          const isCover = rule.selectors!.some((sel) => sel.includes("Cover"));
-          const map = isCover ? coverPropertyConversions : propertyConversions;
-          if (declaration.property! in map) {
-            declaration.property = map[declaration.property!];
-            declaration.value = declaration.value?.replace("!important", "");
-          }
-        }
-      });
+        // danger, this would probably break if there is anything but classes in the selector
+        sortClassesInSelector(rule);
 
-      // danger, this would probably break if there is anything but classes in the selector
-      sortClassesInSelector(rule);
+        // TODO: this doesn't yet move top and bottom margins with .outsideFrontCover and .outsideBackCover to --cover-margin-top and --cover-margin-bottom
 
-      // TODO: this doesn't yet move top and bottom margins with .outsideFrontCover and .outsideBackCover to --cover-margin-top and --cover-margin-bottom
+        sortDeclarations(rule);
+      }
+    });
 
-      sortDeclarations(rule);
-    }
-  });
+    // danger, normally sorting rules is not a good idea!
+    cssObject.stylesheet.rules = sortRules(cssObject.stylesheet.rules);
+  }
 
-  // danger, normally sorting rules is not a good idea!
-  cssObject.stylesheet.rules = sortRules(cssObject.stylesheet.rules);
+  const modifiedCss: string = stringify(cssObject);
+  return modifiedCss;
 }
-
-const modifiedCss: string = stringify(cssObject);
-console.log(modifiedCss);
 
 function sortDeclarations(rule: Rule) {
   // Define the type of propertyConversions
@@ -214,4 +227,13 @@ function sortRules(rules: Rule[]): Rule[] {
       return -1;
     }
   });
+}
+
+function parseFloatOrUndefined(value: string): number | undefined {
+  try {
+    const result = parseFloat(value);
+    return isNaN(result) ? undefined : result;
+  } catch (e) {
+    return undefined;
+  }
 }
