@@ -36,20 +36,46 @@ for (const record of records) {
   if (record.css === undefined) continue;
 
   ++count;
-  if (Bun.argv.length > 2 && count >= Number.parseInt(Bun.argv[2])) break;
+  if (Bun.argv.length > 2 && count > Number.parseInt(Bun.argv[2])) break;
   console.log(`css = ${record.css}`);
   const checksum = crypto.createHash("md5").update(record.css).digest("hex");
   const folder = `./output/migration/${count} ${checksum}`;
+  console.log(`output folder=${folder}`);
   fs.mkdirSync(folder);
 
+  let cssPath = `${folder}/customBookStyles.css`;
+  if (fs.existsSync(cssPath)) {
+    cssPath = `${folder}/customBookStyles2.css`;
+    console.log(`WARNING: multiple migrations in ${folder}`);
+  }
+
+  const migration = migrateCssToAppearance(record.css);
+
   fs.writeFileSync(
-    `${folder}/customBookStyles.css`,
-    migrateCssToAppearance(record.css) +
-      `\n\n /*  ----- ORIGINAL ---- */\n/*${record.css.replaceAll(
-        "*/",
-        "#/"
-      )}*/`
+    cssPath,
+    migration.modifiedCss +
+      `
+
+/*  ----- ORIGINAL ---- */
+/*${record.css.replaceAll("*/", "#/")}*/
+`
   );
+
+  const brandingSet = new Set();
+  for (let i = 0; i < record.paths.length; ++i) {
+    const metaPath = record.paths[i] + "/meta.json";
+    try {
+      const metaString: string = fs.readFileSync(metaPath, "utf8");
+      const metadata = JSON.parse(metaString);
+      const brandingProject = metadata.brandingProjectName as string;
+      if (brandingProject &&
+          brandingProject.toLowerCase() !== "default" &&
+          brandingProject.toLowerCase() !== "local-community")
+        brandingSet.add(brandingProject);
+    } catch (e) {
+      console.log("Could not extract brandingProject from " + metaPath);
+    }
+  }
 
   const uniqueUploaders = [
     ...new Set(
@@ -63,15 +89,27 @@ for (const record of records) {
     ),
   ].slice(0, 3); // first 3 are enough to give a sense of who uploaded these books
 
-  fs.writeFileSync(
-    `${folder}/appearance.json`,
+  const brandings = [...brandingSet];
+  const date = new Date();
+  const outputString: string =
     `// Matches customBookStyles.css with checksum ${checksum}
-// This was used by ${record.book_count} books (${record.unique_named_books} unique).` +
-      // enhance: +`// Affected branding projects include "Mali-ACR-2020-Soninke".`
-      `// Uploaders included ${JSON.stringify(uniqueUploaders)}.
+// On ${date.toDateString()} this was used by ${record.book_count} books (${record.unique_named_books} unique).
+` +
+    (brandings && brandings.length > 0
+      ? `// Affected branding projects included ${JSON.stringify(brandings)}.
+`
+      : ``) +
+    `// Uploaders included ${JSON.stringify(uniqueUploaders)}.
 // Example Book: ${record.first_book}
 // A replacement customBookStyles.css has been generated.
 {
-}`
-  );
+  "cssThemeName": "default",
+  "coverShowTitleL2": ${migration.hideL2TitleOnCover ? "false" : "true"},
+  "coverShowTitleL3": false,
+}
+`;
+  let appearancePath = `${folder}/appearance.json`;
+  if (fs.existsSync(appearancePath))
+    appearancePath = `${folder}/appearance2.json`;
+  fs.writeFileSync(appearancePath, outputString);
 }

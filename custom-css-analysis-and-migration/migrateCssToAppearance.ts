@@ -1,12 +1,12 @@
-/**
- *
- * I'm not clear what state this is in, it was an experiment I was working on.
- * It probably should become a function that is called by create-migrations.ts
- *
+ /**
+ *  function that is called by create-migrations.ts
  * **/
 
-import fs from "fs";
 import { parse, stringify, Rule, Stylesheet, Declaration } from "css";
+export interface Migration {
+  modifiedCss: string;
+  hideL2TitleOnCover: boolean;
+}
 
 const sizes = [
   {
@@ -75,55 +75,105 @@ const coverPropertyConversions: PropertyConversions = {
   width: "--page-margin-right",
 };
 
-export function migrateCssToAppearance(cssFileContent: string): string {
-  var cssObject: Stylesheet;
+export function migrateCssToAppearance(cssFileContent: string): Migration {
+  let cssObject: Stylesheet;
+  let error: string;
   try {
     cssObject = parse(cssFileContent);
   } catch (e) {
-    console.log("Error parsing css: " + e);
-    return cssFileContent;
+    cssObject = null;
+    error = e as string;
+  }
+  if (error && !cssObject) {
+    try {
+      const fixedCss = fixCssIfPossible(cssFileContent, error);
+      cssObject = parse(fixedCss);
+    } catch (e) {
+      console.log("Error parsing css: " + error);
+      return cssFileContent;
+    }
   }
 
+  const otherRules: Rule[] = [];
+  const ruleIndices: number[] = [];
+  let hideL2TitleOnCover = false;
+
   if (cssObject.stylesheet && cssObject.stylesheet.rules) {
+    let ruleIndex = 0;
     cssObject.stylesheet.rules.forEach((rule: Rule) => {
+      ++ruleIndex;
+      //console.log(`DEBUG rule = ${JSON.stringify(rule)}`);
+      if (
+        rule.type === "rule" &&
+        rule.selectors?.some((s: string) => s.includes(".Title-On-Cover-style[lang=") &&
+        rule.declarations?.some(
+          (d: Declaration) => d.property === "display" && d.value === "none"))
+      ) {
+          hideL2TitleOnCover = true;
+      }
       if (
         rule.type === "rule" &&
         rule.selectors &&
         rule.selectors.some((s: string) => s.includes(".marginBox"))
       ) {
-        // THE Following removal, LIKE A LOT OF THIS FILE, IS GARBAGE. A RULE LIKE
-        // .marginBox { background-color: red; } is just fine.
+        // find the sizes element that has the same name as one of the selectors
+        const size = sizes.find((sz) =>
+          rule.selectors!.some((sel) => sel.includes(sz.name))
+        );
+
+        const leftValue = (
+          rule.declarations?.find(
+            (d: Declaration) => d.property === "left"
+          ) as Declaration
+        )?.value!;
+        const left = parseFloatOrUndefined(leftValue);
+
+        const topValue = (
+          rule.declarations?.find(
+            (d: Declaration) => d.property === "top"
+          ) as Declaration
+        )?.value!;
+        const top = parseFloatOrUndefined(topValue);
+
+        if (!size || !leftValue || !topValue) {
+          AddWarningCommentsIfNeeded(rule);
+          return; // leave this rule unchanged.
+        }
+        // A rule like .marginBox { background-color: red; } is just fine.
+        // We preserve rules like this and add them after this loop changes the current rules.
+
+        const unknownDeclarations = rule.declarations?.filter(
+          (d: Declaration) =>
+            d.property !== "height" &&
+            d.property !== "width" &&
+            d.property !== "top" &&
+            d.property !== "left"
+        );
+
+        if (unknownDeclarations && unknownDeclarations.length) {
+          const newRule: Rule = {
+            type: "rule",
+            selectors: rule.selectors,
+            declarations: unknownDeclarations,
+          };
+          sortClassesInSelector(newRule);
+          AddWarningCommentsIfNeeded(newRule);
+          otherRules.push(newRule);
+          ruleIndices.push(ruleIndex);
+          rule.declarations = rule.declarations.filter(
+            (d: Declaration) =>
+              d.property === "height" ||
+              d.property === "width" ||
+              d.property === "top" ||
+              d.property === "left"
+          );
+        }
 
         // remove the .marginBox class from the selectors
         rule.selectors = rule.selectors.map((s: string) =>
           s.replace(".marginBox", "")
         );
 
-        // find the sizes element that has the same name as one of the selectors
-        const size = sizes.find((sz) =>
-          rule.selectors!.some((sel) => sel.includes(sz.name))
-        );
-
-        var x = rule.declarations?.find(
-          (d: Declaration) => d.property === "left"
-        ) as Declaration;
-
-        const l = (
-          rule.declarations?.find(
-            (d: Declaration) => d.property === "left"
-          ) as Declaration
-        )?.value!;
-
-        const t = (
-          rule.declarations?.find(
-            (d: Declaration) => d.property === "top"
-          ) as Declaration
-        )?.value!;
-
-        if (!l || !t) return; // todo log it?
-
-        var left = parseFloatOrUndefined(l);
-        var top = parseFloatOrUndefined(t);
         rule.declarations?.forEach((declaration: Declaration) => {
           if (declaration.type === "declaration") {
             const key = (declaration as Declaration).property;
@@ -134,10 +184,14 @@ export function migrateCssToAppearance(cssFileContent: string): string {
                 declaration.value = ` ignore /* error: ${rule.declarations?.toString()} */`;
               else {
                 if (key === "width") {
-                  declaration.value = size.width - v - left + "mm";
+                  let val = size.width - v - left; // round off to 0 if less than 0.05
+                  if (Math.abs(val) < 0.05) val = 0;
+                  declaration.value = val.toFixed(1) + "mm";
                 }
                 if (key === "height") {
-                  declaration.value = size.height - v - top + "mm";
+                  let val = size.height - v - top; // round off to 0 if less than 0.05
+                  if (Math.abs(val) < 0.05) val = 0;
+                  declaration.value = val.toFixed(1) + "mm";
                 }
               }
             }
@@ -155,21 +209,21 @@ export function migrateCssToAppearance(cssFileContent: string): string {
           }
         });
 
-        // danger, this would probably break if there is anything but classes in the selector
         sortClassesInSelector(rule);
-
-        // TODO: this doesn't yet move top and bottom margins with .outsideFrontCover and .outsideBackCover to --cover-margin-top and --cover-margin-bottom
-
         sortDeclarations(rule);
       }
     });
 
-    // danger, normally sorting rules is not a good idea!
-    cssObject.stylesheet.rules = sortRules(cssObject.stylesheet.rules);
+    if (otherRules && otherRules.length) {
+      // put the new rules immediately after the rule they were extracted from
+      for (let i = otherRules.length - 1; i >= 0; --i) {
+        cssObject.stylesheet.rules.splice(ruleIndices[i], 0, otherRules[i]);
+      }
+    }
   }
 
   const modifiedCss: string = stringify(cssObject);
-  return modifiedCss;
+  return { modifiedCss, hideL2TitleOnCover };
 }
 
 function sortDeclarations(rule: Rule) {
@@ -201,32 +255,17 @@ function sortDeclarations(rule: Rule) {
     }
   });
 }
+
 function sortClassesInSelector(rule: any): void {
-  // sort the classes in the first selector
-  const classes = rule.selectors[0].trim().split(".").filter(Boolean).sort();
-  const sortedSelector = "." + classes.join(".");
-  rule.selectors[0] = sortedSelector;
-}
-
-function sortRules(rules: Rule[]): Rule[] {
-  return rules.sort((a: Rule, b: Rule) => {
-    if (a.type !== "rule" || b.type !== "rule") return 0;
-
-    // sort rules by first selector
-    const aSelector = a.selectors ? a.selectors[0] : undefined;
-    const bSelector = b.selectors ? b.selectors[0] : undefined;
-    if (
-      aSelector === bSelector ||
-      aSelector === undefined ||
-      bSelector === undefined
-    ) {
-      return 0;
-    } else if (aSelector > bSelector) {
-      return 1;
-    } else {
-      return -1;
-    }
-  });
+  // sort the classes in the first selector if appropriate
+  if (!rule.selectors || !rule.selectors.length) return;
+  var selector = rule.selectors[0].trim();
+  if (/^.[A-Za-z][-.A-Za-z0-9]*$/.test(selector))
+  {
+    const classes = rule.selectors[0].trim().split(".").filter(Boolean).sort();
+    const sortedSelector = "." + classes.join(".");
+    rule.selectors[0] = sortedSelector;
+  }
 }
 
 function parseFloatOrUndefined(value: string): number | undefined {
@@ -237,3 +276,74 @@ function parseFloatOrUndefined(value: string): number | undefined {
     return undefined;
   }
 }
+
+// This function fixes the input css for the parse errors found in the various CSS
+// files that pass the filtering process.  The fixes shouldn't affect the semantics
+// of the parsed CSS object.
+function fixCssIfPossible(cssFileContent: string, error: string) {
+  let linesOfCss = cssFileContent.split("\r\n");
+  if (linesOfCss.length === 1) linesOfCss = cssFileContent.split("\n");
+  if (linesOfCss.length === 1) linesOfCss = cssFileContent.split("\r");
+  const parsedError = /^Error: [^:]*:([0-9]+):([0-9]+): (.*)$/.exec(error);
+  if (parsedError && parsedError.length === 4) {
+    const lineNumber = parseInt(parsedError[1]);
+    switch (parsedError[3]) {
+      case "selector missing": // 1 occurrence of a strange contruct
+        if (linesOfCss[lineNumber - 1].includes("} {")) {
+          linesOfCss[lineNumber - 1] = linesOfCss[lineNumber - 1].replace(
+            "} {",
+            " "
+          );
+          return linesOfCss.join("\r\n");
+        }
+        break;
+      case "missing '}'": // 2 occurrences of lines missing an obvious '}'
+        linesOfCss[lineNumber - 1] = "} " + linesOfCss[lineNumber - 1];
+        return linesOfCss.join("\r\n");
+      case "missing '{'": // 2 occurrences of a '.' on the final line by itself
+        if (linesOfCss[lineNumber - 1] === ".") {
+          linesOfCss.splice(lineNumber - 1, 1);
+          return linesOfCss.join("\r\n");
+        }
+        break;
+      case "End of comment missing": // 36 occurrences
+        if (lineNumber === linesOfCss.length) {
+          return cssFileContent + "*/";
+        }
+        // There's one file with an empty line and a spurious close } by itself on a line
+        // following the comment that isn't closed properly at the end of the file.
+        let emptyLines = true;
+        for (let i = lineNumber; emptyLines && i < linesOfCss.length; ++i) {
+          if (linesOfCss[i].length >= 2) emptyLines = false;
+        }
+        if (emptyLines) return cssFileContent + "*/";
+        break;
+      default:
+        break;
+    }
+  }
+  return cssFileContent;
+}
+
+function AddWarningCommentsIfNeeded(rule: Rule) {
+  const comments: Declaration[] = [];
+  const commentIndices: number[] = [];
+  rule.declarations?.forEach((d: Declaration, index: number) => {
+    if (d.property === "bottom" ||
+        d.property === "right" ||
+        d.property?.includes("margin-") ||
+        d.property?.includes("padding-")) {
+      const comment: Declaration = {} as Declaration;
+      comment.type = "comment";
+      comment.comment = ` ${d.property}: NOT MIGRATED `;
+      comments.push(comment);
+      commentIndices.push(index);
+    }
+  });
+  if (comments && comments.length) {
+    for (let i = comments.length - 1; i >= 0; --i) {
+      rule.declarations!.splice(commentIndices[i], 0, comments[i]);
+    }
+  }
+}
+

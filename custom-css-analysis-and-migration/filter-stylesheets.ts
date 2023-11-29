@@ -34,7 +34,7 @@ const recordsWithUniqueifiedPaths = filteredRecords.map((record) => {
   const uniquePaths = uniqueFilenames.map((filename) => {
     return paths.find((path) => path.endsWith(filename));
   });
-  const instanceId = paths[0].split("/")[2];
+  const instanceId = paths[0].split("/")[3];
   return {
     book_count: paths.length,
     unique_named_books: uniquePaths.length,
@@ -75,12 +75,13 @@ console.write(
   `, covering ${filteredRecords.reduce(
     (acc, record) => acc + record.paths.length,
     0
-  )} books, `
+  )} books`
 );
-
 // console.write(
-//   `${recordsWithUniqueifiedPaths.reduce(
+//   `, ${recordsWithUniqueifiedPaths.reduce(
 //     (acc, record) => acc + record.uniqueified_paths.length,
 //     0
 //   )} of which have unique names (should remove most rebrands).\r\n`
 // );
+console.write(`
+`);

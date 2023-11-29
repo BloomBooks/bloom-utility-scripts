@@ -11,35 +11,38 @@ interface FileData {
 }
 
 const boilerplate =
-  '/*  Some books may need control over aspects of layout that cannot yet be adjusted\r\n    from the Bloom interface. In those cases, Bloom provides this "under the hood" method\r\n    of creating style rules using the underlying "Cascading Stylesheets" system.\r\n    These rules are then applied to all books in this collection.  EDIT THIS FILE ONLY\r\n    IN THE COLLECTION FOLDER:  changes made to a copy found in the book folder will be\r\n    lost the next time the book is edited with Bloom!\r\n\r\n Note: you can also add a file named "customBookStyles.css" in the book folder,\r\n    to limit the effects of the rules to just that one book.\r\n\r\n    You can learn about CSS from hundreds of books, or online. However chances are, if\r\n    you need this customization, you will need an expert to create a version of this file\r\n    for you, or give you rules that you can paste in below this line. */';
+  /\/\*  Some books may need control over aspects of layout that cannot yet be adjusted(.|[\r\n])*?\*\//;
 
-const boilerplate2 =
-  '/*  Some books may need control over aspects of layout that cannot yet be adjusted\r\n    from the Bloom interface. In those cases, Bloom provides this "under the hood" method\r\n    of creating style rules using the underlying "Cascading Stylesheets" system. \r\n    These rules are then applied to all books in this collection.\r\n\r\n Note: you can also add a file named "customBookStyles.css" in the book folder,\r\n    to limit the effects of the rules to just that one book.\r\n \r\n    You can learn about CSS from hundreds of books, or online. However chances are, if\r\n    you need this customization, you will need an expert to create a version of this file\r\n    for you, or give you rules that you can paste in below this line. */';
 let count = 0;
 function readFilesRecursively(
   dir: string,
   fileMap: Map<string, FileData>
 ): void {
   const files = fs.readdirSync(dir);
+  let cssCount = 0;
   for (const file of files) {
     const filePath = path.join(dir, file);
     if (Bun.argv.length > 2 && count >= Number.parseInt(Bun.argv[2])) return;
     if (fs.statSync(filePath).isDirectory()) {
       readFilesRecursively(filePath, fileMap);
     } else {
+      if (file === "meta.json") continue;
       const content = fs
         .readFileSync(filePath, "utf8")
         .replace(boilerplate, "")
-        .replace(boilerplate2, "")
         .trim();
       if (content === "") continue;
+      ++cssCount;
 
       const fileData: FileData = fileMap.get(content) || { content, paths: [] };
       fileData.paths.push(dir.replace("./output/downloads", ""));
       fileMap.set(content, fileData);
-      console.log(++count + " " + dir);
+      console.log(++count + " " + filePath);
     }
   }
+  if (cssCount > 1)
+    console.log(`WARNING: multiple CSS files with content in ${dir}`);
+  cssCount = 0;
 }
 
 const sourceDir = "./output/downloads";
