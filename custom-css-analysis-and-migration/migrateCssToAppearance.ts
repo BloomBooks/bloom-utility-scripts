@@ -99,9 +99,7 @@ export function migrateCssToAppearance(cssFileContent: string): Migration {
   let hideL2TitleOnCover = false;
 
   if (cssObject.stylesheet && cssObject.stylesheet.rules) {
-    let ruleIndex = 0;
-    cssObject.stylesheet.rules.forEach((rule: Rule) => {
-      ++ruleIndex;
+    cssObject.stylesheet.rules.forEach((rule: Rule, index: number) => {
       //console.log(`DEBUG rule = ${JSON.stringify(rule)}`);
       if (
         rule.type === "rule" &&
@@ -140,7 +138,17 @@ export function migrateCssToAppearance(cssFileContent: string): Migration {
           return; // leave this rule unchanged.
         }
         // A rule like .marginBox { background-color: red; } is just fine.
-        // We preserve rules like this and add them after this loop changes the current rules.
+        // (A rule like .marginBox .narrowStyle { width: 200px; } is also fine.  But there's no reason for
+        // such a rule to mention .marginBox, so there's no point in improving this code unless we
+        // encounter a large number of such rules.)
+        // We're looking for rules that affect the marginBox's size and position (top/left/height/width)
+        // because the new theme system controls these with variables that affect the .bloom-page margin
+        // instead of absolutely positioning the .marginBox, so setting its top or left will have no effect,
+        // and setting its height or width will probably do something unwanted.  If such a rule also changes
+        // safe properties, we split it into two rules, one that has only the problem declarations (which
+        // we try to fix to the new values needed) and one that has only the safe declarations.
+        // We also remove the .marginBox class from the selectors for the rules with the updated new
+        // declarations, since it's no longer needed.
 
         const unknownDeclarations = rule.declarations?.filter(
           (d: Declaration) =>
@@ -159,7 +167,7 @@ export function migrateCssToAppearance(cssFileContent: string): Migration {
           sortClassesInSelector(newRule);
           AddWarningCommentsIfNeeded(newRule);
           otherRules.push(newRule);
-          ruleIndices.push(ruleIndex);
+          ruleIndices.push(index + 1);
           rule.declarations = rule.declarations.filter(
             (d: Declaration) =>
               d.property === "height" ||
@@ -169,7 +177,10 @@ export function migrateCssToAppearance(cssFileContent: string): Migration {
           );
         }
 
-        // remove the .marginBox class from the selectors
+        // The remaining declarations in this rule are all safe to keep, but we need to change them
+        // to use the new variables instead and to change the height and width to bottom and right.
+        // Also, the .marginBox class is no longer needed in the selector since the new variable
+        // settings apply to the page outside the .marginBox proper.
         rule.selectors = rule.selectors.map((s: string) =>
           s.replace(".marginBox", "")
         );
@@ -183,13 +194,20 @@ export function migrateCssToAppearance(cssFileContent: string): Migration {
               if (v === undefined || left === undefined || top === undefined)
                 declaration.value = ` ignore /* error: ${rule.declarations?.toString()} */`;
               else {
+                // Calculate the new value for the declaration from the old value, and round
+                // off to zero if it's very close to zero.  (The new value is either a bottom
+                // or a right margin instead of a height or width.)  Something less than 0.05mm
+                // is effectively just a rounding error from these floating point subtractions.
+                // We use val.toFixed(1) since precision greater than 0.1mm isn't worthwhile.
+                // (Not rounding off to zero explicitly can results in values like -0.0 which
+                // look odd even if they work okay.)
                 if (key === "width") {
-                  let val = size.width - v - left; // round off to 0 if less than 0.05
+                  let val = size.width - v - left;
                   if (Math.abs(val) < 0.05) val = 0;
                   declaration.value = val.toFixed(1) + "mm";
                 }
                 if (key === "height") {
-                  let val = size.height - v - top; // round off to 0 if less than 0.05
+                  let val = size.height - v - top;
                   if (Math.abs(val) < 0.05) val = 0;
                   declaration.value = val.toFixed(1) + "mm";
                 }
@@ -199,6 +217,9 @@ export function migrateCssToAppearance(cssFileContent: string): Migration {
             const isCover = rule.selectors!.some((sel) =>
               sel.includes("Cover")
             );
+            // Map the existing property name to the new variable name.
+            // (This takes care of having changed the value from width or height
+            // to right or bottom above.)
             const map = isCover
               ? coverPropertyConversions
               : propertyConversions;
@@ -260,7 +281,7 @@ function sortClassesInSelector(rule: any): void {
   // sort the classes in the first selector if appropriate
   if (!rule.selectors || !rule.selectors.length) return;
   var selector = rule.selectors[0].trim();
-  if (/^.[A-Za-z][-.A-Za-z0-9]*$/.test(selector))
+  if (/^\.[A-Za-z][-.A-Za-z0-9]*$/.test(selector))
   {
     const classes = rule.selectors[0].trim().split(".").filter(Boolean).sort();
     const sortedSelector = "." + classes.join(".");
@@ -332,7 +353,9 @@ function AddWarningCommentsIfNeeded(rule: Rule) {
     if (d.property === "bottom" ||
         d.property === "right" ||
         d.property?.includes("margin-") ||
-        d.property?.includes("padding-")) {
+        d.property?.includes("margin:") ||
+        d.property?.includes("padding-") ||
+        d.property?.includes("padding:")) {
       const comment: Declaration = {} as Declaration;
       comment.type = "comment";
       comment.comment = ` ${d.property}: NOT MIGRATED `;

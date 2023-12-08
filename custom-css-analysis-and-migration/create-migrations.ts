@@ -44,10 +44,6 @@ for (const record of records) {
   fs.mkdirSync(folder);
 
   let cssPath = `${folder}/customBookStyles.css`;
-  if (fs.existsSync(cssPath)) {
-    cssPath = `${folder}/customBookStyles2.css`;
-    console.log(`WARNING: multiple migrations in ${folder}`);
-  }
 
   const migration = migrateCssToAppearance(record.css);
 

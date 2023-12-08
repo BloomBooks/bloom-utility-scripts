@@ -15,7 +15,7 @@ const count = records.reduce((acc, record) => acc + record.paths.length, 0);
 console.write(`total books with custom css rules: ${count}\r\n`);
 console.write(`total unique css files: ${records.length}\r\n`);
 
-const kProbablyWillInterfere = `\\.marginBox\\s*\\{[^\\}]*?(?<![-\\w])(padding-|left:|top:|right:|bottom:|margin-|width:|height:)[^\\}]*\\}`;
+const kProbablyWillInterfere = `\\.marginBox\\s*\\{[^\\}]*?(?<![-\\w])(padding[-:]|left:|top:|right:|bottom:|margin[-:]|width:|height:)[^\\}]*\\}`;
 const kProbablyWillInterfereRegex = new RegExp(kProbablyWillInterfere, "gi");
 
 const max = Bun.argv.length > 2 ? Number.parseInt(Bun.argv[2]) : 10000000;

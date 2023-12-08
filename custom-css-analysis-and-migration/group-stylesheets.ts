@@ -35,13 +35,13 @@ function readFilesRecursively(
       ++cssCount;
 
       const fileData: FileData = fileMap.get(content) || { content, paths: [] };
-      fileData.paths.push(dir.replace("./output/downloads", ""));
+      fileData.paths.push(dir.replace(/^(\.\/)?output\/downloads\//, ""));
       fileMap.set(content, fileData);
       console.log(++count + " " + filePath);
     }
   }
   if (cssCount > 1)
-    console.log(`WARNING: multiple CSS files with content in ${dir}`);
+    console.log(`INFO: customCollectionStyles.css and customBookStyles.css both have content in ${dir}`);
   cssCount = 0;
 }
 
