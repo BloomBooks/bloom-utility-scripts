@@ -2,6 +2,7 @@
  *  function that is called by create-migrations.ts
  * **/
 
+// These are documented at https://www.npmjs.com/package/css/v/3.0.0.
 import { parse, stringify, Rule, Stylesheet, Declaration } from "css";
 export interface Migration {
   modifiedCss: string;
@@ -144,12 +145,13 @@ export function migrateCssToAppearance(cssFileContent: string): Migration {
         // We're looking for rules that affect the marginBox's size and position (top/left/height/width)
         // because the new theme system controls these with variables that affect the .bloom-page margin
         // instead of absolutely positioning the .marginBox, so setting its top or left will have no effect,
-        // and setting its height or width will probably do something unwanted.  If such a rule also changes
+        // and setting its height or width will probably do something unwanted.  If such a rule also has
         // safe properties, we split it into two rules, one that has only the problem declarations (which
-        // we try to fix to the new values needed) and one that has only the safe declarations.
-        // We also remove the .marginBox class from the selectors for the rules with the updated new
-        // declarations, since it's no longer needed.
-
+        // we try to fix to have the new values needed) and one that has only the safe declarations.
+        // The .marginBox class is removed from the selectors for the rules with the updated new
+        // declarations since it's no longer needed.
+        // Producing split rules also helps human reviewers to see what's going on, and to check that the
+        // new rules are correct.
         const unknownDeclarations = rule.declarations?.filter(
           (d: Declaration) =>
             d.property !== "height" &&
@@ -164,7 +166,7 @@ export function migrateCssToAppearance(cssFileContent: string): Migration {
             selectors: rule.selectors,
             declarations: unknownDeclarations,
           };
-          sortClassesInSelector(newRule);
+          sortClassesInSelectors(newRule);
           AddWarningCommentsIfNeeded(newRule);
           otherRules.push(newRule);
           ruleIndices.push(index + 1);
@@ -230,7 +232,7 @@ export function migrateCssToAppearance(cssFileContent: string): Migration {
           }
         });
 
-        sortClassesInSelector(rule);
+        sortClassesInSelectors(rule);
         sortDeclarations(rule);
       }
     });
@@ -255,6 +257,8 @@ function sortDeclarations(rule: Rule) {
 
   // Define the property conversions object
   const orderedProperties: PropertyConversions = {
+    "--cover-margin-top": 0,
+    "--cover-margin-bottom": 1,
     "--page-margin-top": 0,
     "--page-margin-bottom": 1,
     "--page-margin-left": 2,
@@ -277,15 +281,24 @@ function sortDeclarations(rule: Rule) {
   });
 }
 
-function sortClassesInSelector(rule: any): void {
-  // sort the classes in the first selector if appropriate
+function sortClassesInSelectors(rule: any): void {
+  // Sort the classes in the selectors if feasible.
+  // This makes the rules easier to read and to compare.
   if (!rule.selectors || !rule.selectors.length) return;
-  var selector = rule.selectors[0].trim();
-  if (/^\.[A-Za-z][-.A-Za-z0-9]*$/.test(selector))
-  {
-    const classes = rule.selectors[0].trim().split(".").filter(Boolean).sort();
-    const sortedSelector = "." + classes.join(".");
-    rule.selectors[0] = sortedSelector;
+  for (let i = 0; i < rule.selectors.length; ++i) {
+    // Note that rule.selectors is an Array of Strings split on commas.
+    const selector = rule.selectors[i].trim();
+    // If the selector is just a list of classes in the same element, sort them.
+    // We don't try to sort selectors that have multiple element levels or that
+    // have something other than classes.
+    if (/^\.[A-Za-z][-.A-Za-z0-9]*$/.test(selector))
+    {
+      const classes = selector.split(".").filter(Boolean).sort();
+      const sortedSelector = "." + classes.join(".");
+      // We don't need to worry about leading or trailing spaces in the selector
+      // because the output stringify function has its own ideas about how to format.
+      rule.selectors[i] = sortedSelector;
+    }
   }
 }
 

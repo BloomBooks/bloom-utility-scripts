@@ -37,7 +37,7 @@ for (const record of records) {
 
   ++count;
   if (Bun.argv.length > 2 && count > Number.parseInt(Bun.argv[2])) break;
-  console.log(`css = ${record.css}`);
+  //console.log(`css = ${record.css}`);
   const checksum = crypto.createHash("md5").update(record.css).digest("hex");
   const folder = `./output/migration/${count} ${checksum}`;
   console.log(`output folder=${folder}`);
@@ -59,7 +59,7 @@ for (const record of records) {
 
   const brandingSet = new Set();
   for (let i = 0; i < record.paths.length; ++i) {
-    const metaPath = record.paths[i] + "/meta.json";
+    const metaPath = "./output/downloads/" + record.paths[i] + "/meta.json";
     try {
       const metaString: string = fs.readFileSync(metaPath, "utf8");
       const metadata = JSON.parse(metaString);
@@ -69,14 +69,14 @@ for (const record of records) {
           brandingProject.toLowerCase() !== "local-community")
         brandingSet.add(brandingProject);
     } catch (e) {
-      console.log("Could not extract brandingProject from " + metaPath);
+      console.log("Could not extract brandingProjectName from " + metaPath + ": " + e);
     }
   }
 
   const uniqueUploaders = [
     ...new Set(
       record.paths.map((path: string) => {
-        const email = path.split("/")[2];
+        const email = path.split("/")[0];
         const emailParts = email.split("@");
         const obfuscatedEmail =
           emailParts[0].slice(0, -2) + "..." + "@" + emailParts[1];
@@ -100,8 +100,6 @@ for (const record of records) {
 // A replacement customBookStyles.css has been generated.
 {
   "cssThemeName": "default",
-  "coverShowTitleL2": ${migration.hideL2TitleOnCover ? "false" : "true"},
-  "coverShowTitleL3": false,
 }
 `;
   let appearancePath = `${folder}/appearance.json`;

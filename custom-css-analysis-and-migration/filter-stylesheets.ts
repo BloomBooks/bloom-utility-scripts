@@ -34,7 +34,7 @@ const recordsWithUniqueifiedPaths = filteredRecords.map((record) => {
   const uniquePaths = uniqueFilenames.map((filename) => {
     return paths.find((path) => path.endsWith(filename));
   });
-  const instanceId = paths[0].split("/")[3];
+  const instanceId = paths[0].split("/")[1];
   return {
     book_count: paths.length,
     unique_named_books: uniquePaths.length,
