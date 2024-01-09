@@ -1,12 +1,13 @@
-/**
- *
- * I'm not clear what state this is in, it was an experiment I was working on.
- * It probably should become a function that is called by create-migrations.ts
- *
+ /**
+ *  function that is called by create-migrations.ts
  * **/
 
-import fs from "fs";
+// These are documented at https://www.npmjs.com/package/css/v/3.0.0.
 import { parse, stringify, Rule, Stylesheet, Declaration } from "css";
+export interface Migration {
+  modifiedCss: string;
+  hideL2TitleOnCover: boolean;
+}
 
 const sizes = [
   {
@@ -75,55 +76,117 @@ const coverPropertyConversions: PropertyConversions = {
   width: "--page-margin-right",
 };
 
-export function migrateCssToAppearance(cssFileContent: string): string {
-  var cssObject: Stylesheet;
+export function migrateCssToAppearance(cssFileContent: string): Migration {
+  let cssObject: Stylesheet;
+  let error: string;
   try {
     cssObject = parse(cssFileContent);
   } catch (e) {
-    console.log("Error parsing css: " + e);
-    return cssFileContent;
+    cssObject = null;
+    error = e as string;
+  }
+  if (error && !cssObject) {
+    try {
+      const fixedCss = fixCssIfPossible(cssFileContent, error);
+      cssObject = parse(fixedCss);
+    } catch (e) {
+      console.log("Error parsing css: " + error);
+      return cssFileContent;
+    }
   }
 
+  const otherRules: Rule[] = [];
+  const ruleIndices: number[] = [];
+  let hideL2TitleOnCover = false;
+
   if (cssObject.stylesheet && cssObject.stylesheet.rules) {
-    cssObject.stylesheet.rules.forEach((rule: Rule) => {
+    cssObject.stylesheet.rules.forEach((rule: Rule, index: number) => {
+      //console.log(`DEBUG rule = ${JSON.stringify(rule)}`);
+      if (
+        rule.type === "rule" &&
+        rule.selectors?.some((s: string) => s.includes(".Title-On-Cover-style[lang=") &&
+        rule.declarations?.some(
+          (d: Declaration) => d.property === "display" && d.value === "none"))
+      ) {
+          hideL2TitleOnCover = true;
+      }
       if (
         rule.type === "rule" &&
         rule.selectors &&
         rule.selectors.some((s: string) => s.includes(".marginBox"))
       ) {
-        // THE Following removal, LIKE A LOT OF THIS FILE, IS GARBAGE. A RULE LIKE
-        // .marginBox { background-color: red; } is just fine.
-
-        // remove the .marginBox class from the selectors
-        rule.selectors = rule.selectors.map((s: string) =>
-          s.replace(".marginBox", "")
-        );
-
         // find the sizes element that has the same name as one of the selectors
         const size = sizes.find((sz) =>
           rule.selectors!.some((sel) => sel.includes(sz.name))
         );
 
-        var x = rule.declarations?.find(
-          (d: Declaration) => d.property === "left"
-        ) as Declaration;
-
-        const l = (
+        const leftValue = (
           rule.declarations?.find(
             (d: Declaration) => d.property === "left"
           ) as Declaration
         )?.value!;
+        const left = parseFloatOrUndefined(leftValue);
 
-        const t = (
+        const topValue = (
           rule.declarations?.find(
             (d: Declaration) => d.property === "top"
           ) as Declaration
         )?.value!;
+        const top = parseFloatOrUndefined(topValue);
 
-        if (!l || !t) return; // todo log it?
+        if (!size || !leftValue || !topValue) {
+          AddWarningCommentsIfNeeded(rule);
+          return; // leave this rule unchanged.
+        }
+        // A rule like .marginBox { background-color: red; } is just fine.
+        // (A rule like .marginBox .narrowStyle { width: 200px; } is also fine.  But there's no reason for
+        // such a rule to mention .marginBox, so there's no point in improving this code unless we
+        // encounter a large number of such rules.)
+        // We're looking for rules that affect the marginBox's size and position (top/left/height/width)
+        // because the new theme system controls these with variables that affect the .bloom-page margin
+        // instead of absolutely positioning the .marginBox, so setting its top or left will have no effect,
+        // and setting its height or width will probably do something unwanted.  If such a rule also has
+        // safe properties, we split it into two rules, one that has only the problem declarations (which
+        // we try to fix to have the new values needed) and one that has only the safe declarations.
+        // The .marginBox class is removed from the selectors for the rules with the updated new
+        // declarations since it's no longer needed.
+        // Producing split rules also helps human reviewers to see what's going on, and to check that the
+        // new rules are correct.
+        const unknownDeclarations = rule.declarations?.filter(
+          (d: Declaration) =>
+            d.property !== "height" &&
+            d.property !== "width" &&
+            d.property !== "top" &&
+            d.property !== "left"
+        );
 
-        var left = parseFloatOrUndefined(l);
-        var top = parseFloatOrUndefined(t);
+        if (unknownDeclarations && unknownDeclarations.length) {
+          const newRule: Rule = {
+            type: "rule",
+            selectors: rule.selectors,
+            declarations: unknownDeclarations,
+          };
+          sortClassesInSelectors(newRule);
+          AddWarningCommentsIfNeeded(newRule);
+          otherRules.push(newRule);
+          ruleIndices.push(index + 1);
+          rule.declarations = rule.declarations.filter(
+            (d: Declaration) =>
+              d.property === "height" ||
+              d.property === "width" ||
+              d.property === "top" ||
+              d.property === "left"
+          );
+        }
+
+        // The remaining declarations in this rule are all safe to keep, but we need to change them
+        // to use the new variables instead and to change the height and width to bottom and right.
+        // Also, the .marginBox class is no longer needed in the selector since the new variable
+        // settings apply to the page outside the .marginBox proper.
+        rule.selectors = rule.selectors.map((s: string) =>
+          s.replace(".marginBox", "")
+        );
+
         rule.declarations?.forEach((declaration: Declaration) => {
           if (declaration.type === "declaration") {
             const key = (declaration as Declaration).property;
@@ -133,11 +196,22 @@ export function migrateCssToAppearance(cssFileContent: string): string {
               if (v === undefined || left === undefined || top === undefined)
                 declaration.value = ` ignore /* error: ${rule.declarations?.toString()} */`;
               else {
+                // Calculate the new value for the declaration from the old value, and round
+                // off to zero if it's very close to zero.  (The new value is either a bottom
+                // or a right margin instead of a height or width.)  Something less than 0.05mm
+                // is effectively just a rounding error from these floating point subtractions.
+                // We use val.toFixed(1) since precision greater than 0.1mm isn't worthwhile.
+                // (Not rounding off to zero explicitly can results in values like -0.0 which
+                // look odd even if they work okay.)
                 if (key === "width") {
-                  declaration.value = size.width - v - left + "mm";
+                  let val = size.width - v - left;
+                  if (Math.abs(val) < 0.05) val = 0;
+                  declaration.value = val.toFixed(1) + "mm";
                 }
                 if (key === "height") {
-                  declaration.value = size.height - v - top + "mm";
+                  let val = size.height - v - top;
+                  if (Math.abs(val) < 0.05) val = 0;
+                  declaration.value = val.toFixed(1) + "mm";
                 }
               }
             }
@@ -145,6 +219,9 @@ export function migrateCssToAppearance(cssFileContent: string): string {
             const isCover = rule.selectors!.some((sel) =>
               sel.includes("Cover")
             );
+            // Map the existing property name to the new variable name.
+            // (This takes care of having changed the value from width or height
+            // to right or bottom above.)
             const map = isCover
               ? coverPropertyConversions
               : propertyConversions;
@@ -155,21 +232,21 @@ export function migrateCssToAppearance(cssFileContent: string): string {
           }
         });
 
-        // danger, this would probably break if there is anything but classes in the selector
-        sortClassesInSelector(rule);
-
-        // TODO: this doesn't yet move top and bottom margins with .outsideFrontCover and .outsideBackCover to --cover-margin-top and --cover-margin-bottom
-
+        sortClassesInSelectors(rule);
         sortDeclarations(rule);
       }
     });
 
-    // danger, normally sorting rules is not a good idea!
-    cssObject.stylesheet.rules = sortRules(cssObject.stylesheet.rules);
+    if (otherRules && otherRules.length) {
+      // put the new rules immediately after the rule they were extracted from
+      for (let i = otherRules.length - 1; i >= 0; --i) {
+        cssObject.stylesheet.rules.splice(ruleIndices[i], 0, otherRules[i]);
+      }
+    }
   }
 
   const modifiedCss: string = stringify(cssObject);
-  return modifiedCss;
+  return { modifiedCss, hideL2TitleOnCover };
 }
 
 function sortDeclarations(rule: Rule) {
@@ -180,6 +257,8 @@ function sortDeclarations(rule: Rule) {
 
   // Define the property conversions object
   const orderedProperties: PropertyConversions = {
+    "--cover-margin-top": 0,
+    "--cover-margin-bottom": 1,
     "--page-margin-top": 0,
     "--page-margin-bottom": 1,
     "--page-margin-left": 2,
@@ -201,32 +280,26 @@ function sortDeclarations(rule: Rule) {
     }
   });
 }
-function sortClassesInSelector(rule: any): void {
-  // sort the classes in the first selector
-  const classes = rule.selectors[0].trim().split(".").filter(Boolean).sort();
-  const sortedSelector = "." + classes.join(".");
-  rule.selectors[0] = sortedSelector;
-}
 
-function sortRules(rules: Rule[]): Rule[] {
-  return rules.sort((a: Rule, b: Rule) => {
-    if (a.type !== "rule" || b.type !== "rule") return 0;
-
-    // sort rules by first selector
-    const aSelector = a.selectors ? a.selectors[0] : undefined;
-    const bSelector = b.selectors ? b.selectors[0] : undefined;
-    if (
-      aSelector === bSelector ||
-      aSelector === undefined ||
-      bSelector === undefined
-    ) {
-      return 0;
-    } else if (aSelector > bSelector) {
-      return 1;
-    } else {
-      return -1;
+function sortClassesInSelectors(rule: any): void {
+  // Sort the classes in the selectors if feasible.
+  // This makes the rules easier to read and to compare.
+  if (!rule.selectors || !rule.selectors.length) return;
+  for (let i = 0; i < rule.selectors.length; ++i) {
+    // Note that rule.selectors is an Array of Strings split on commas.
+    const selector = rule.selectors[i].trim();
+    // If the selector is just a list of classes in the same element, sort them.
+    // We don't try to sort selectors that have multiple element levels or that
+    // have something other than classes.
+    if (/^\.[A-Za-z][-.A-Za-z0-9]*$/.test(selector))
+    {
+      const classes = selector.split(".").filter(Boolean).sort();
+      const sortedSelector = "." + classes.join(".");
+      // We don't need to worry about leading or trailing spaces in the selector
+      // because the output stringify function has its own ideas about how to format.
+      rule.selectors[i] = sortedSelector;
     }
-  });
+  }
 }
 
 function parseFloatOrUndefined(value: string): number | undefined {
@@ -237,3 +310,76 @@ function parseFloatOrUndefined(value: string): number | undefined {
     return undefined;
   }
 }
+
+// This function fixes the input css for the parse errors found in the various CSS
+// files that pass the filtering process.  The fixes shouldn't affect the semantics
+// of the parsed CSS object.
+function fixCssIfPossible(cssFileContent: string, error: string) {
+  let linesOfCss = cssFileContent.split("\r\n");
+  if (linesOfCss.length === 1) linesOfCss = cssFileContent.split("\n");
+  if (linesOfCss.length === 1) linesOfCss = cssFileContent.split("\r");
+  const parsedError = /^Error: [^:]*:([0-9]+):([0-9]+): (.*)$/.exec(error);
+  if (parsedError && parsedError.length === 4) {
+    const lineNumber = parseInt(parsedError[1]);
+    switch (parsedError[3]) {
+      case "selector missing": // 1 occurrence of a strange contruct
+        if (linesOfCss[lineNumber - 1].includes("} {")) {
+          linesOfCss[lineNumber - 1] = linesOfCss[lineNumber - 1].replace(
+            "} {",
+            " "
+          );
+          return linesOfCss.join("\r\n");
+        }
+        break;
+      case "missing '}'": // 2 occurrences of lines missing an obvious '}'
+        linesOfCss[lineNumber - 1] = "} " + linesOfCss[lineNumber - 1];
+        return linesOfCss.join("\r\n");
+      case "missing '{'": // 2 occurrences of a '.' on the final line by itself
+        if (linesOfCss[lineNumber - 1] === ".") {
+          linesOfCss.splice(lineNumber - 1, 1);
+          return linesOfCss.join("\r\n");
+        }
+        break;
+      case "End of comment missing": // 36 occurrences
+        if (lineNumber === linesOfCss.length) {
+          return cssFileContent + "*/";
+        }
+        // There's one file with an empty line and a spurious close } by itself on a line
+        // following the comment that isn't closed properly at the end of the file.
+        let emptyLines = true;
+        for (let i = lineNumber; emptyLines && i < linesOfCss.length; ++i) {
+          if (linesOfCss[i].length >= 2) emptyLines = false;
+        }
+        if (emptyLines) return cssFileContent + "*/";
+        break;
+      default:
+        break;
+    }
+  }
+  return cssFileContent;
+}
+
+function AddWarningCommentsIfNeeded(rule: Rule) {
+  const comments: Declaration[] = [];
+  const commentIndices: number[] = [];
+  rule.declarations?.forEach((d: Declaration, index: number) => {
+    if (d.property === "bottom" ||
+        d.property === "right" ||
+        d.property?.includes("margin-") ||
+        d.property?.includes("margin:") ||
+        d.property?.includes("padding-") ||
+        d.property?.includes("padding:")) {
+      const comment: Declaration = {} as Declaration;
+      comment.type = "comment";
+      comment.comment = ` ${d.property}: NOT MIGRATED `;
+      comments.push(comment);
+      commentIndices.push(index);
+    }
+  });
+  if (comments && comments.length) {
+    for (let i = comments.length - 1; i >= 0; --i) {
+      rule.declarations!.splice(commentIndices[i], 0, comments[i]);
+    }
+  }
+}
+

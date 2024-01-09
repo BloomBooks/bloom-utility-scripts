@@ -1,6 +1,6 @@
 In Bloom 5.7, we introduce a modernized, parameterized page layout CSS system, known as "Appearance". This new system conflicts with the arbitrary custom css that was used in prior Bloom versions, mostly in the area of margins.
 
-As of this writing, we are only looking at `customBookStyles.css`, but `customCollectionsStyles.css` have the same problem.
+As of this writing, we are looking at both `customBookStyles.css` and `customCollectionsStyles.css`, but not handling having both files with content, and not really dealing with `customCollectionStyles.css` being a collection wide settings file.
 
 When Bloom encounters a pre-5.7 book with a `customBookStyles.css` that would conflict with the new system, it goes into a kind of "safe mode" that keeps things working by using a legacy `basePage.css`. Better, though, is to migrate the old css to the new system. Conceivably, a reliable program could be written to do this automatically. However at the moment what we do is to write the migrations using the utilities here, and then have a dev evaluate individual migrations and then copy them over to the shipping Bloom. So when Bloom encounters one of these books, we may already have a tested migration for it.
 
@@ -8,26 +8,28 @@ When Bloom encounters a pre-5.7 book with a `customBookStyles.css` that would co
 
 ⚠️ Be careful what you commit to an open source repo. We do not want to expose emails or other private data.
 
-1.  As of this writing, bun only works on linux. If you are on windows, just install Windows Subsystem for Linux (not as big of a deal as it sounds), then run in a WSL terminal in VSCODE.
+1. As of this writing, bun works only on linux. If you are on windows, just install Windows Subsystem for Linux (not as big of a deal as it sounds), then run in a WSL terminal in VSCODE.
 
-1.  Get [bun](https://bun.sh/) installed
+2. Get [bun](https://bun.sh/) installed
 
-1.  Install dependencies: `bun install`
-
-1.  Download all the `customBookStyles.css` from blorg
+3. Choose (or create) a folder for working with CSS files and download all the `customBookStyles.css` and `customCollectionStyles.css` files from bloomlibrary.org.  This will take some time.
 
     `./some-path/BloomBulkDownloader.exe --include "*/*/custom*Styles.css" --syncfolder ./output/downloads --bucket production customBookStyles-files`
 
+4. Download all the `meta.json` files from bloomlibrary.org.  Again, this will take some time.
+
+    `./some-path/BloomBulkDownloader.exe --include "*/*/meta.json" --syncfolder ./output/downloads --bucket production customBookStyles-files`
+
 Each of the following take an optional argument that will limit the number of records processed.
 
-5.  Process those, grouping them into bins of duplicate stylesheets
+5. Process those, grouping them into bins of duplicate stylesheets
 
-    `bun run group-stylesheets.ts 13`
+    `bun run /path-to/group-stylesheets.ts 13`
 
-1.  Process those groups, discarding ones that don't need migration
+6. Process those groups, discarding ones that don't need migration
 
-    `bun run filter-stylesheets.ts 7`
+    `bun run /path-to/filter-stylesheets.ts 7`
 
-1.  Create draft migration files for each one
+7. Create draft migration files for each one
 
-    `bun run create-migrations.ts 3`
+    `bun run /path-to/create-migrations.ts 3`

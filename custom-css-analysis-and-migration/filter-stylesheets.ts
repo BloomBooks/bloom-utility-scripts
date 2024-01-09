@@ -15,7 +15,7 @@ const count = records.reduce((acc, record) => acc + record.paths.length, 0);
 console.write(`total books with custom css rules: ${count}\r\n`);
 console.write(`total unique css files: ${records.length}\r\n`);
 
-const kProbablyWillInterfere = `\\.marginBox\\s*\\{[^\\}]*?(?<![-\\w])(padding-|left:|top:|right:|bottom:|margin-|width:|height:)[^\\}]*\\}`;
+const kProbablyWillInterfere = `\\.marginBox\\s*\\{[^\\}]*?(?<![-\\w])(padding[-:]|left:|top:|right:|bottom:|margin[-:]|width:|height:)[^\\}]*\\}`;
 const kProbablyWillInterfereRegex = new RegExp(kProbablyWillInterfere, "gi");
 
 const max = Bun.argv.length > 2 ? Number.parseInt(Bun.argv[2]) : 10000000;
@@ -34,7 +34,7 @@ const recordsWithUniqueifiedPaths = filteredRecords.map((record) => {
   const uniquePaths = uniqueFilenames.map((filename) => {
     return paths.find((path) => path.endsWith(filename));
   });
-  const instanceId = paths[0].split("/")[2];
+  const instanceId = paths[0].split("/")[1];
   return {
     book_count: paths.length,
     unique_named_books: uniquePaths.length,
@@ -75,12 +75,13 @@ console.write(
   `, covering ${filteredRecords.reduce(
     (acc, record) => acc + record.paths.length,
     0
-  )} books, `
+  )} books`
 );
-
 // console.write(
-//   `${recordsWithUniqueifiedPaths.reduce(
+//   `, ${recordsWithUniqueifiedPaths.reduce(
 //     (acc, record) => acc + record.uniqueified_paths.length,
 //     0
 //   )} of which have unique names (should remove most rebrands).\r\n`
 // );
+console.write(`
+`);
